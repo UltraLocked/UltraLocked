@@ -15,7 +15,7 @@ This document details the technical architecture of UltraLocked, which is founde
 2.  **Per-File Perfect Forward Secrecy (PFS):** Every file is treated as a distinct cryptographic entity, encrypted with a unique, single-use key. The compromise of one file's key has no cryptographic impact on any other file in the vault.
 3.  **Robust Emergency Failsafe Systems:** Advanced protocols, including a Duress Code system that activates a decoy vault while silently destroying the real one, provide users with powerful tools for plausible deniability and data protection under coercion.
 
-By transparently outlining our threat models and security mechanisms, this paper aims to demonstrate that UltraLocked provides a new standard of personal data sovereignty and forensic resilience on a mobile platform.
+By transparently outlining our threat models and security mechanisms, this paper aims to demonstrate that UltraLocked provides a new standard of personal data sovereignty and forensic resilience on a mobile platform. To ensure the integrity of our implementation, we are committed to undergoing a comprehensive, independent third-party security audit, the results of which will be made public.
 
 ---
 
@@ -206,8 +206,8 @@ This section provides a detailed examination of the key features that form Ultra
     The process for encrypting each file is as follows:
     1.  **Ephemeral Key Generation:** An ephemeral P-256 Elliptic-Curve key pair (a temporary public and private key) is generated in volatile memory.
     2.  **Key Agreement:** The ephemeral public key is combined with the app's non-extractable master key agreement key (which resides permanently in the Secure Enclave) using the Elliptic-Curve Diffie-Hellman (ECDH) key agreement algorithm. This operation is performed *inside* the Secure Enclave.
-    3.  **Key Derivation:** The resulting shared secret from the ECDH operation is used as input for a Key Derivation Function (HKDF) based on SHA-256. A cryptographically random salt is added to derive a unique and single-use 256-bit AES-GCM key.
-    4.  **Authenticated Encryption:** The file's plaintext is encrypted using the derived AES-256-GCM key. This algorithm provides both confidentiality (encryption) and authenticity (protection against tampering).
+    3.  **Key Derivation:** The resulting shared secret from the ECDH operation is used as input for a Key Derivation Function (HKDF) based on SHA-256 [RFC 5869]. A cryptographically random salt is added to derive a unique and single-use 256-bit AES-GCM key. The HKDF uses a specific info string format: `"UltraLocked-PFS-v1-{fileId}"` for domain separation, ensuring cryptographic isolation between file encryption operations.
+    4.  **Authenticated Encryption:** The file's plaintext is encrypted using the derived AES-256-GCM key [NIST SP 800-38D]. This algorithm provides both confidentiality (encryption) and authenticity (protection against tampering).
     5.  **Signing & Packaging:** The resulting ciphertext, along with the ephemeral public key and the salt, is signed by the app's master signing key (also in the Secure Enclave). This package becomes the `EncryptedFileWrapper` stored on disk.
     6.  **Secure Cleanup:** All sensitive key material generated during this process (the ephemeral private key, the shared secret, and the final AES key) is securely wiped from memory (`memset_s`) and never written to persistent storage.
 
@@ -222,7 +222,7 @@ sequenceDiagram
     CryptoCore->>Memory: Generate Ephemeral Key Pair (ECC P-256)
     CryptoCore->>SE: deriveSharedSecret(ephemeralPublicKey, masterKeyAgreementKey)
     SE-->>CryptoCore: Returns uniqueSharedSecret
-    CryptoCore->>CryptoCore: Derive AES-256-GCM key via HKDF(sharedSecret, salt)
+    CryptoCore->>CryptoCore: Derive AES-256-GCM key via HKDF(sharedSecret, salt, info_string)
     CryptoCore->>CryptoCore: Encrypt plaintext with AES key
     CryptoCore-->>App: Returns ciphertext
     CryptoCore->>SE: sign(ciphertext + metadata)
@@ -338,6 +338,20 @@ sequenceDiagram
 
 The security architecture of UltraLocked is purpose-built to counter a range of modern digital and physical threats. This section outlines the primary threat vectors considered during development and the specific architectural features designed to mitigate them.
 
+#### **6.1 Acknowledged Limitations & Residual Risks**
+
+While UltraLocked implements industry-leading security practices, we acknowledge the practical limitations of our mitigations and the residual risks that remain inherent to any security system:
+
+**Secure Deletion on Flash Storage:** UltraLocked employs a multi-pass overwrite strategy via `SecureFileDeletion` to sanitize file blocks before unlinking. However, we acknowledge the inherent challenges of guaranteed data erasure on modern flash storage (SSDs). Due to wear-leveling algorithms managed by the hardware controller, the physical blocks may not be overwritten as intended. This process should be considered a significant deterrent that dramatically increases the cost and complexity of data recovery, rather than a guarantee of absolute forensic impossibility.
+
+**Secure Enclave Vulnerabilities:** Our security model's root of trust is the Secure Enclave. While this provides industry-leading hardware isolation, we recognize that it is not immune to advanced, physical side-channel attacks (e.g., power analysis, fault injection) or potential vulnerabilities in Apple's proprietary firmware. Our defense-in-depth strategy aims to mitigate risks, but we operate under the assumption that a sufficiently motivated state-level actor may possess undisclosed methods to target this hardware.
+
+**Memory Forensics:** The `SecureMemoryManager` uses `mlock` to prevent sensitive cryptographic material from being paged to disk. However, we acknowledge that in certain edge cases, such as OS-level hibernation or system crashes, memory contents could still be written to persistent storage. Our ephemeral keying model is designed to minimize the window of exposure for any single key.
+
+**Duress System Limitations:** Upon duress code entry, the destruction of the real vault is initiated as a background task. This process is not instantaneous and its completion time depends on the size of the vault. A sophisticated adversary could potentially halt this process by immediately placing the device in airplane mode and powering it down for forensic imaging. The design goal is to make the destruction process begin immediately and silently, maximizing the probability of completion before an adversary can intervene.
+
+**Forensic Traces of Duress Activation:** The activation of duress mode sets a flag in `UserDefaults` to maintain the decoy state across app launches. While this flag is cryptographically unsigned and could be dismissed as a transient state, a sophisticated forensic analyst might interpret it as evidence of duress system activation. This represents a calculated trade-off between functionality and perfect forensic stealth.
+
 | Threat Vector | Description | Primary Mitigation(s) |
 | :--- | :--- | :--- |
 | **Coercive Access** | An attacker physically forces the user to unlock their device and the app ("Five-Dollar Wrench Attack"). The goal is to gain access to the real, sensitive data. | **Duress Code System:** The primary defense. Entering the duress PIN reveals a plausible decoy vault while silently triggering the cryptographic destruction of the real vault, protecting the user by making the authentic data permanently irrecoverable. <br><br> **Emergency Triggers:** Secondary failsafes like rapid device shaking or voice commands allow for quick activation of emergency protocols without needing to interact with the screen. |
@@ -347,6 +361,24 @@ The security architecture of UltraLocked is purpose-built to counter a range of 
 | **Network-Based Attacks (MITM)** | An attacker on a hostile network (e.g., public Wi-Fi) attempts to intercept or manipulate traffic, primarily to attack potential future features or OS-level services. | **Network Threat Monitor:** Although the app is offline-first, this monitor provides a layer of defense by detecting insecure Wi-Fi, suspicious proxies, and potential SSL/TLS interception, which could be used in more advanced, chained attacks. It can trigger alerts or lock the vault if a high-risk network is detected. |
 | **Application Tampering** | The app's binary is modified (e.g., repackaged with malicious code) to bypass security checks and exfiltrate data. | **Device Attestation:** Performs code integrity and bundle signature checks on launch. If the application's signature does not match the officially signed version, it indicates tampering, and the app will refuse to run or will immediately wipe the vault. |
 | **User Incapacitation** | The user loses their device, is incapacitated, or is otherwise unable to access it for an extended period, risking eventual compromise. | **Dead Man's Switch:** Acts as an ultimate failsafe, automatically and securely wiping the entire vault if the user does not perform an authenticated "check-in" within a pre-configured time window. <br><br> **Self-Destruct Timers (TTL):** Ensures that individual files with a limited lifespan are automatically and securely deleted, minimizing the window of exposure for time-sensitive data. |
+
+---
+
+### **6.2 Key Management & Recovery**
+
+UltraLocked's approach to key management is fundamentally different from conventional secure storage solutions. Understanding this philosophy is critical for users who require the highest levels of security.
+
+**The No-Backup Philosophy:** UltraLocked is designed as a 'single-source-of-truth' vault. All cryptographic keys are anchored to the device's unique hardware through the Secure Enclave. Consequently, there is **no cloud backup or key recovery mechanism by design**. This is a fundamental architectural choice that prioritizes security against remote compromise over data recovery convenience.
+
+**Master Key Provisioning:** The initial `masterKeyAgreementKey` and `masterSigningKey` in the `SecureEnclaveManager` are generated on first application launch using `SecKeyCreateRandomKey` with Secure Enclave attributes. These keys are created once per application installation and remain permanently bound to the device's hardware. If this initial provisioning process is interrupted (e.g., device shutdown during key generation), the application will detect the incomplete state on next launch and restart the key generation process with a clean slate.
+
+**Device Loss Scenario:** Users must understand that if the device is lost, stolen, or its Secure Enclave becomes permanently inaccessible (e.g., hardware failure), the vault data becomes irrecoverable by design. This includes scenarios such as:
+- Physical device destruction or theft
+- Secure Enclave hardware failure
+- iOS system corruption affecting Keychain access
+- User forgetting both their main PIN and duress PIN
+
+**Error Handling in Cryptographic Operations:** The system implements robust error handling for cryptographic failures. If `SecKeyCreateRandomKey` fails during key generation, the system retries up to three times with increasing delays. If ECDH key agreement fails during file operations, the system logs the error and prevents the file operation from proceeding, maintaining data integrity. Users are advised to maintain their own independent, secure backup strategies for truly critical information that must survive device loss.
 
 ---
 
@@ -366,17 +398,19 @@ UltraLocked's commitment to user privacy is absolute and is reflected in its cor
 
 UltraLocked represents a significant step forward in personal data security on mobile devices. By moving the root of trust to the hardware and designing for failure, it provides a resilient and trustworthy environment for sensitive information. Its architecture is built not just to protect data from unauthorized access, but to provide the user with credible tools for plausible deniability and forensic resilience in the most challenging of circumstances. We believe this transparent, user-controlled model is the future of personal privacy.
 
+To maintain the highest standards of security and transparency, we are committed to subjecting UltraLocked to rigorous independent security auditing. The results of these audits will be made publicly available, ensuring that our security claims can be independently verified and that any discovered vulnerabilities are promptly addressed.
+
 ---
 
 ### **Appendix**
 
 #### **A.1 Glossary of Terms**
 
-*   **Secure Enclave:** A dedicated, hardware-based security co-processor in Apple's chips that is isolated from the main processor. It handles cryptographic operations and ensures that secret key material is never exposed to the operating system.
+*   **Secure Enclave:** A dedicated, hardware-based security co-processor in Apple's chips that is isolated from the main processor [Apple Platform Security Guide]. It handles cryptographic operations and ensures that secret key material is never exposed to the operating system.
 *   **Perfect Forward Secrecy (PFS):** An encryption property ensuring that if a long-term key is compromised, past session keys (and thus past encrypted data) are not compromised. In UltraLocked's context, it refers to the per-file ephemeral keying system.
-*   **AES-265-GCM:** Advanced Encryption Standard with a 256-bit key in Galois/Counter Mode. A modern, authenticated encryption algorithm that provides both confidentiality and integrity.
+*   **AES-256-GCM:** Advanced Encryption Standard with a 256-bit key in Galois/Counter Mode [NIST SP 800-38D]. A modern, authenticated encryption algorithm that provides both confidentiality and integrity.
 *   **ECDH (Elliptic-Curve Diffie-Hellman):** A key agreement protocol that allows two parties, each having an elliptic-curve public-private key pair, to establish a shared secret over an insecure channel.
-*   **HKDF (HMAC-based Key Derivation Function):** A function that takes a potentially weak secret and a salt and produces a stronger, cryptographically secure key.
+*   **HKDF (HMAC-based Key Derivation Function):** A function that takes a potentially weak secret and a salt and produces a stronger, cryptographically secure key [RFC 5869].
 *   **Plausible Deniability:** The ability for a user to credibly deny the existence of a piece of information. In UltraLocked, this is achieved via the Duress Code and decoy vault.
 *   **Forensic Resilience:** The ability of a system to resist forensic analysis and data recovery efforts after data has been deleted.
 

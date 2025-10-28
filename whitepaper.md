@@ -1,7 +1,7 @@
 ### **UltraLocked: A Whitepaper on Hardware-Anchored, Ephemeral Security for iOS**
 
 **Version:** 1.0
-**Date:** July 28, 2025
+**Date:** October 28, 2025
 
 ---
 
@@ -70,7 +70,7 @@ UltraLocked's security is not reliant on a single mechanism. Instead, it employs
 2.  **Operating System:** The security features of the iOS sandbox.
 3.  **Cryptography:** The per-file Perfect Forward Secrecy model.
 4.  **Application Logic:** Continuous, real-time threat monitoring for signs of environmental compromise.
-5.  **User-Defined Protocols:** Configurable failsafes like the Dead Man's Switch and Emergency Triggers.
+5.  **User-Defined Protocols:** Configurable failsafes like the Dead Man's Switch.
 
 A failure or bypass of one layer is intended to be caught or mitigated by another, ensuring that the integrity of the user's vault is maintained even under adverse conditions.
 
@@ -179,7 +179,7 @@ While UltraLocked implements industry-leading security practices, we acknowledge
 
 | Threat Vector | Description | Primary Mitigation(s) |
 | :--- | :--- | :--- |
-| **Coercive Access** | An attacker physically forces the user to unlock their device and the app ("Five-Dollar Wrench Attack"). The goal is to gain access to the real, sensitive data. | **Duress Code System:** The primary defense. Entering the duress PIN reveals a plausible decoy vault while silently triggering the cryptographic destruction of the real vault, protecting the user by making the authentic data permanently irrecoverable. <br><br> **Emergency Triggers:** Secondary failsafes like rapid device shaking or voice commands allow for quick activation of emergency protocols without needing to interact with the screen. |
+| **Coercive Access** | An attacker physically forces the user to unlock their device and the app ("Five-Dollar Wrench Attack"). The goal is to gain access to the real, sensitive data. | **Duress Code System:** The primary defense. Entering the duress PIN reveals a plausible decoy vault while silently triggering the cryptographic destruction of the real vault, protecting the user by making the authentic data permanently irrecoverable. |
 | **Device Seizure & Forensic Analysis** | The user's device is confiscated and subjected to advanced offline analysis to recover data, keys, or user activity. | **Hardware-Anchored Keys:** Master keys are confined to the Secure Enclave and are non-extractable, preventing them from being recovered even with low-level access to the device's flash storage. <br><br> **Per-File PFS:** Since each file uses a unique key, forensic recovery would require a separate, computationally intensive attack for every single file. <br><br> **Secure Memory Management:** Prevents sensitive key material from being written to swap files on disk and disables core dumps, minimizing the forensic data available for cold boot or memory dump attacks. <br><br> **Secure File Deletion:** Uses multi-pass overwrites to sanitize storage blocks before a file is deleted, making data recovery significantly more difficult than a standard file system unlink. |
 | **Malicious Software / Malware** | A malicious application or profile on the device attempts to escalate privileges to access UltraLocked's sandboxed data or keychain entries. | **iOS App Sandboxing:** The fundamental OS-level protection that isolates the app's data container. <br><br> **Device Attestation:** Actively checks for signs of a compromised environment (e.g., jailbreak), which is often a prerequisite for cross-app malware. If detected, security policies can be enforced to lock or wipe the vault. |
 | **Shoulder Surfing / Screen Capture** | An observer or a malicious process (e.g., spyware) views or records the screen to capture sensitive information or the user's PIN. | **Screen Security Monitor:** Detects active screen recording or mirroring (e.g., AirPlay) and automatically applies a privacy overlay to obscure all content. <br><br> **Anti-Debugging:** Prevents attackers from attaching debuggers, which are a common tool for runtime analysis and screen inspection. |
@@ -203,7 +203,7 @@ UltraLocked's approach to key management is fundamentally different from convent
 - iOS system corruption affecting Keychain access
 - User forgetting both their main PIN and duress PIN
 
-**Error Handling in Cryptographic Operations:** The system implements robust error handling for cryptographic failures. If `SecKeyCreateRandomKey` fails during key generation, the system retries up to three times with increasing delays. If ECDH key agreement fails during file operations, the system logs the error and prevents the file operation from proceeding, maintaining data integrity. Users are advised to maintain their own independent, secure backup strategies for truly critical information that must survive device loss.
+**Error Handling in Cryptographic Operations:** The system implements robust error handling for cryptographic failures. If `SecKeyCreateRandomKey` fails during key generation, the system retries up to three times with brief delays between attempts. If ECDH key agreement fails during file operations, the system logs the error and prevents the file operation from proceeding, maintaining data integrity. Users are advised to maintain their own independent, secure backup strategies for truly critical information that must survive device loss.
 
 ---
 
